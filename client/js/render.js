@@ -4,7 +4,7 @@ const G = {
   foods: new Map(), potions: new Map(), worms: new Map(),
   self: { ready: false, x: 0, y: 0, angle: 0, path: [], mass: 20, r: 12, kills: 0,
           fx: { spd: 0, agi: 0, mag: 0, zm: 0, mult: 0, mt: 0 }, fxAt: 0, corrX: 0, corrY: 0 },
-  lb: [], teamScores: null, heat: [],
+  lb: [], teamScores: null, heat: [], off: null,
   cam: { x: 0, y: 0, zoom: 1 },
   showNames: true,
 };
@@ -175,13 +175,16 @@ const Render = (() => {
   // ===== Snapshots =====
   function onSnap(m) {
     const now = performance.now();
+    // reloj del SERVIDOR: interpolar contra él elimina los microtirones por jitter de red
+    const off = m.now - now;
+    G.off = G.off === null ? off : G.off * 0.92 + off * 0.08;
     const seen = new Set();
     for (const w of m.w) {
       seen.add(w.i);
       let e = G.worms.get(w.i);
-      if (!e) { e = { prev: null, cur: null }; G.worms.set(w.i, e); }
+      if (!e) { e = { prev: null, cur: null, born: now }; G.worms.set(w.i, e); }
       e.prev = e.cur;
-      e.cur = { ...w, ts: now, crv: curveOf(w.p) };
+      e.cur = { ...w, ts: now, tsS: m.now, crv: curveOf(w.p) };
       if (!e.prev) e.prev = e.cur;
     }
     for (const id of [...G.worms.keys()]) {
@@ -333,10 +336,10 @@ const Render = (() => {
   // ===== Interpolación de otros gusanos: paramétrica por longitud de arco =====
   // (los cuerpos se muestrean por fracción de longitud → sin bloques, sin vibración,
   //  y el cuerpo COMPLETO siempre visible, incluso en gigantes)
-  const BODY_SAMPLES = 64;
-  function interpBody(e, renderTime) {
+  const BODY_SAMPLES = 80;
+  function interpBody(e, renderTimeS) {
     const a = e.prev, b = e.cur;
-    let alpha = b.ts > a.ts ? (renderTime - a.ts) / (b.ts - a.ts) : 1;
+    let alpha = b.tsS > a.tsS ? (renderTimeS - a.tsS) / (b.tsS - a.tsS) : 1;
     alpha = Math.max(0, Math.min(1, alpha));
     const ca = a.crv, cb = b.crv;
     const out = new Array(BODY_SAMPLES);
@@ -446,20 +449,20 @@ const Render = (() => {
       }
     }
 
-    const renderTime = now - 150;
+    const renderTimeS = now + (G.off || 0) - 150; // tiempo de render contra el reloj del servidor
 
     // otros gusanos
     for (const e of G.worms.values()) {
       if (e.cur.i === G.myId) continue;
-      const { pts, r } = interpBody(e, renderTime);
+      const { pts, r } = interpBody(e, renderTimeS);
       // visible si CUALQUIER punto del cuerpo está en pantalla (no solo la cabeza:
       // un gigante puede tener la cabeza lejos y el cuerpo cruzándote)
       let vis = false;
-      for (let i = 0; i < pts.length; i += 2) {
+      for (let i = 0; i < pts.length; i++) {
         if (inView(pts[i].x, pts[i].y, 300)) { vis = true; break; }
       }
       if (!vis) continue;
-      drawWorm(pts, r, e.cur.s, e.cur.c, e.cur.w, e.cur.n, e.cur.t, e.cur.b);
+      drawWorm(pts, r, e.cur.s, e.cur.c, e.cur.w, e.cur.n, e.cur.t, e.cur.b, e.born);
     }
     // mi gusano (predicho) — no dibujar si estoy muerto (cámara de muerte)
     if (S.ready && G.playing && !G.dead) {
@@ -571,10 +574,19 @@ const Render = (() => {
     ctx.beginPath(); ctx.arc(cx, cy, R + 3, 0, Math.PI * 2); ctx.stroke();
   }
 
-  function drawWorm(pts, r, skin, custom, wear, name, team, boosting) {
+  function drawWorm(pts, r, skin, custom, wear, name, team, boosting, born) {
     const d = Skins.def(skin, custom);
     const h = pts[0];
     const ang = Math.atan2(h.y - pts[1].y, h.x - pts[1].x);
+    // fade-in de aparición (nadie "sale de la nada": emergen suavemente)
+    let alphaIn = 1;
+    if (born) {
+      const t = Math.min(1, (performance.now() - born) / 450);
+      alphaIn = 0.15 + 0.85 * t;
+      r = r * (0.45 + 0.55 * t);
+    }
+    ctx.save();
+    ctx.globalAlpha = alphaIn;
     // motion blur: copia fantasma del cuerpo desplazada hacia atrás
     if (boosting && pts.length > 1) {
       const gx = -Math.cos(ang) * r * 1.5, gy = -Math.sin(ang) * r * 1.5;
@@ -620,6 +632,7 @@ const Render = (() => {
       ctx.fillStyle = team === 1 ? '#ff8a8a' : team === 2 ? '#8ac4ff' : '#fff';
       ctx.fillText(name, h.x, ny);
     }
+    ctx.restore(); // fade-in
   }
 
   // ===== Loop principal =====

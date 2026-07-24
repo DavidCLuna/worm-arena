@@ -76,11 +76,22 @@ class World {
   queryBodies(x, y, r) { return this.bodyGrid.query(x, y, r); }
 
   freeSpawn() {
-    for (let i = 0; i < 25; i++) {
+    // lejos de HUMANOS (1700u: fuera de su pantalla → nadie "aparece de la nada")
+    for (let i = 0; i < 30; i++) {
       const p = randPos(600);
       let ok = true;
       for (const w of this.worms.values()) {
-        if (Math.hypot(w.head.x - p.x, w.head.y - p.y) < 700) { ok = false; break; }
+        const minD = w.isBot ? 500 : 1700;
+        if (Math.hypot(w.head.x - p.x, w.head.y - p.y) < minD) { ok = false; break; }
+      }
+      if (ok) return p;
+    }
+    // fallback relajado
+    for (let i = 0; i < 20; i++) {
+      const p = randPos(600);
+      let ok = true;
+      for (const w of this.worms.values()) {
+        if (Math.hypot(w.head.x - p.x, w.head.y - p.y) < 600) { ok = false; break; }
       }
       if (ok) return p;
     }
