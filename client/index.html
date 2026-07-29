@@ -6,9 +6,9 @@
 <title>WormArena</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Anton&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Titan+One&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/client/css/style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%232ec27e'/><circle cx='11' cy='13' r='3' fill='white'/><circle cx='21' cy='13' r='3' fill='white'/><circle cx='11' cy='13' r='1.4' fill='black'/><circle cx='21' cy='13' r='1.4' fill='black'/></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%231a9fff'/><circle cx='11' cy='13' r='3' fill='white'/><circle cx='21' cy='13' r='3' fill='white'/><circle cx='11' cy='13' r='1.4' fill='black'/><circle cx='21' cy='13' r='1.4' fill='black'/></svg>">
 </head>
 <body>
 <canvas id="game"></canvas>
@@ -20,28 +20,59 @@
     <div id="hud-kills">💀 <span id="kills-val">0</span></div>
     <div id="fxbar"></div>
   </div>
+  <div id="party-banner" class="hidden">Party <b id="party-code-hud"></b></div>
   <div id="lb"><h3 data-i18n="leaders">Clasificación</h3><ol id="lb-list"></ol></div>
   <div id="team-score" class="hidden"><span class="t-red">🔴 <b id="ts-red">0</b></span> vs <span class="t-blue">🔵 <b id="ts-blue">0</b></span></div>
   <button id="btn-exit" title="Salir">✕</button>
   <div id="touch-boost" class="hidden">⚡</div>
 </div>
 
-<!-- ===== Menú principal ===== -->
+<!-- ===== Menú principal — Fortnite dark ===== -->
 <div id="screen-menu">
-  <div class="vice-bg">
-    <div class="vice-sun"></div>
-    <div class="vice-grid"></div>
-    <span class="palm left">🌴</span>
-    <span class="palm right">🌴</span>
+  <div class="fn-bg" aria-hidden="true">
+    <div class="fn-orb o1"></div>
+    <div class="fn-orb o2"></div>
+    <div class="fn-streak s1"></div>
+    <div class="fn-streak s2"></div>
+    <div class="fn-streak s3"></div>
   </div>
   <div class="menu-card">
-    <h1 class="logo">Worm<span>Arena</span></h1>
+    <div class="logo-wrap">
+      <div class="mascot" aria-hidden="true">
+        <svg viewBox="0 0 80 64" width="72" height="58">
+          <ellipse cx="40" cy="36" rx="28" ry="20" fill="#1a9fff"/>
+          <ellipse cx="40" cy="36" rx="28" ry="20" fill="url(#g)" opacity=".4"/>
+          <circle cx="30" cy="30" r="7" fill="#fff"/><circle cx="50" cy="30" r="7" fill="#fff"/>
+          <circle cx="31" cy="31" r="3.2" fill="#111"/><circle cx="51" cy="31" r="3.2" fill="#111"/>
+          <circle cx="32.2" cy="29.5" r="1.1" fill="#fff"/><circle cx="52.2" cy="29.5" r="1.1" fill="#fff"/>
+          <path d="M28 44 Q40 52 52 44" stroke="#0a5fad" fill="none" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="18" cy="22" r="5" fill="#f7e359"/><circle cx="62" cy="20" r="4" fill="#ff7a18"/>
+          <defs><radialGradient id="g" cx=".35" cy=".3"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#1a9fff"/></radialGradient></defs>
+        </svg>
+      </div>
+      <h1 class="logo">Worm<span>Arena</span></h1>
+    </div>
     <p class="tagline" data-i18n="tagline">¡Atrapa caramelos, galletas y pasteles!</p>
     <canvas id="skin-preview" width="260" height="90"></canvas>
     <input id="inp-name" maxlength="14" placeholder="Tu nombre" data-i18n-ph="name">
     <div class="play-row">
       <button id="btn-play-arena" class="btn big green" data-i18n="arena">Arena</button>
       <button id="btn-play-teams" class="btn big blue" data-i18n="teams">2 Equipos</button>
+    </div>
+    <div class="party-row">
+      <button id="btn-party" class="btn party" data-i18n="party">🎉 Party con amigos</button>
+    </div>
+    <div id="party-invite" class="party-invite hidden">
+      <div class="party-invite-label" data-i18n="partylink">Link de party</div>
+      <div class="party-invite-row">
+        <input id="party-link" readonly>
+        <button id="btn-copy-party" class="btn tiny green" data-i18n="copy">Copiar</button>
+      </div>
+      <div id="party-status" class="party-status"></div>
+    </div>
+    <div id="party-join-hint" class="party-join-hint hidden">
+      <span data-i18n="joiningparty">Entrarás a la party</span> <b id="party-join-code"></b>
+      <button id="btn-clear-party" class="btn tiny" data-i18n="clearparty">Quitar</button>
     </div>
     <div class="menu-row">
       <button id="btn-skins" class="btn" data-i18n="skins">Skins</button>
@@ -60,8 +91,12 @@
 
 <!-- ===== Pantalla de muerte ===== -->
 <div id="screen-death" class="hidden">
-  <div class="menu-card">
+  <div class="fn-bg death-bg" aria-hidden="true">
+    <div class="confetti-layer" id="death-confetti"></div>
+  </div>
+  <div class="menu-card death-card">
     <h2 data-i18n="dead">¡Te comieron!</h2>
+    <div id="death-coins" class="death-coins" aria-hidden="true"></div>
     <div id="death-stats"></div>
     <div id="death-levelup" class="hidden">🎉 <span data-i18n="levelup">¡Subiste de nivel!</span> <b id="death-level"></b></div>
     <div class="play-row">

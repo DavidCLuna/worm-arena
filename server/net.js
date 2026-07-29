@@ -45,7 +45,7 @@ function setupNet(server, rooms) {
       }
       case 'join': {
         if (client.worm) rooms.leave(client);
-        client.spectate = null; client.world = null;
+        client.spectate = null; client.world = null; client.partyCode = null;
         // tamaño de pantalla del cliente → rango de visión sincronizado con su zoom
         client.screenDiag = Math.hypot(Number(m.w) || 1280, Number(m.h) || 720) / 2;
         const p = client.profile;
@@ -54,12 +54,19 @@ function setupNet(server, rooms) {
           skin: typeof m.skin === 'number' ? m.skin : (p ? p.skin : 0),
           customSkin: m.customSkin || (p ? p.customSkin : null),
           wear: m.wear || (p ? p.wear : 'none'),
+          createParty: !!m.createParty,
+          partyCode: m.party ? String(m.party) : null,
         };
-        const worm = rooms.join(client, m.mode === 'teams' ? 'teams' : 'arena', opts);
-        send(client, {
-          t: 'j', id: worm.id, mode: client.world.mode, team: worm.team,
-          foods: client.world.allFoods(),
-        });
+        try {
+          const worm = rooms.join(client, m.mode === 'teams' ? 'teams' : 'arena', opts);
+          send(client, {
+            t: 'j', id: worm.id, mode: client.world.mode, team: worm.team,
+            foods: client.world.allFoods(),
+            party: client.partyCode || undefined,
+          });
+        } catch (e) {
+          send(client, { t: 'j', err: e.code || e.message || 'join_fail' });
+        }
         break;
       }
       case 'input': {
@@ -95,19 +102,23 @@ function setupNet(server, rooms) {
   // Eventos del tick relevantes para un espectador en (hx, hy)
   function collectEvents(world, viewerId, hx, hy) {
     const evs = [];
+    let headshot = false;
     for (const e of world.events) {
       if (e.k === 'f+') {
-        evs.push(['f+', e.f.id, Math.round(e.f.x), Math.round(e.f.y), e.f.v, e.f.t, e.f.s || 0]);
+        // comida de cadáver siempre; el resto solo si está cerca (ahorra ancho de banda)
+        const f = e.f;
+        const near = f.s || Math.hypot(f.x - hx, f.y - hy) < 3500;
+        if (near) evs.push(['f+', f.id, Math.round(f.x), Math.round(f.y), f.v, f.t, f.s || 0]);
       } else if (e.k === 'f-') {
         evs.push(['f-', e.id]);
       } else if (e.k === 'death') {
         evs.push(['d', e.id, e.by, e.hs ? 1 : 0]);
-        if (e.by === viewerId && e.hs) return { evs, headshot: true };
+        if (e.by === viewerId && e.hs) headshot = true;
       } else if (e.k === 'pot' && e.id === viewerId) {
         evs.push(['pot', e.pot]);
       }
     }
-    return { evs, headshot: false };
+    return { evs, headshot };
   }
 
   // Llamado tras cada tick de simulación

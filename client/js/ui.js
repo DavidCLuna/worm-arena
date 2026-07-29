@@ -13,6 +13,11 @@ const UI = (() => {
       gallery: 'Galería', needlogin: '(inicia sesión para comprar)',
       score: 'Puntos', time: 'Tiempo', kills: 'Bajas', custom: 'Personalizada',
       ateyou: 'Te comió', borderdeath: '¡Chocaste con el borde!',
+      party: '🎉 Party con amigos', partylink: 'Link de party', copy: 'Copiar',
+      copied: '¡Copiado! Compártelo con tus amigos',
+      joiningparty: 'Entrarás a la party', clearparty: 'Quitar',
+      party_not_found: 'Party no encontrada (¿expiró el código?)',
+      party_full: 'Party llena (máx. 8)', join_fail: 'No se pudo unir',
     },
     en: {
       tagline: 'Catch candies, cookies and cakes!', name: 'Your name',
@@ -26,6 +31,11 @@ const UI = (() => {
       gallery: 'Gallery', needlogin: '(log in to buy)',
       score: 'Score', time: 'Time', kills: 'Kills', custom: 'Custom',
       ateyou: 'You were eaten by', borderdeath: 'You hit the border!',
+      party: '🎉 Party with friends', partylink: 'Party link', copy: 'Copy',
+      copied: 'Copied! Share it with friends',
+      joiningparty: 'You will join party', clearparty: 'Clear',
+      party_not_found: 'Party not found (code expired?)',
+      party_full: 'Party full (max 8)', join_fail: 'Could not join',
     },
   };
   let lang = 'es';
@@ -79,9 +89,12 @@ const UI = (() => {
       lbLast = now;
       const ol = document.getElementById('lb-list');
       ol.innerHTML = '';
+      const friendNames = new Set();
+      for (const e of G.worms.values()) { if (e.cur && e.cur.f) friendNames.add(e.cur.n); }
       G.lb.forEach((e, i) => {
         const li = document.createElement('li');
         if (e.n === My.name) li.className = 'me';
+        else if (friendNames.has(e.n)) li.className = 'friend';
         li.innerHTML = `<span>${i + 1}. ${escapeHtml(e.n)}</span><b>${e.m}</b>`;
         ol.appendChild(li);
       });
@@ -204,12 +217,73 @@ const UI = (() => {
       AudioFX.levelup();
     } else hide('death-levelup');
     hide('hud'); show('screen-death');
+    spawnDeathFX();
     if (m.profile) { My.profile = m.profile; updateProfile(m.profile); }
+  }
+
+  function spawnDeathFX() {
+    const layer = document.getElementById('death-confetti');
+    const coins = document.getElementById('death-coins');
+    if (layer) {
+      layer.innerHTML = '';
+      const colors = ['#f7e359', '#1a9fff', '#ff7a18', '#3ef0d0', '#ff2d55', '#ffffff'];
+      for (let i = 0; i < 36; i++) {
+        const el = document.createElement('i');
+        el.style.left = Math.random() * 100 + '%';
+        el.style.background = colors[i % colors.length];
+        el.style.animationDelay = (Math.random() * 0.8) + 's';
+        el.style.animationDuration = (1.8 + Math.random() * 1.2) + 's';
+        layer.appendChild(el);
+      }
+    }
+    if (coins) {
+      coins.innerHTML = '';
+      for (let i = 0; i < 14; i++) {
+        const c = document.createElement('span');
+        c.className = 'coin';
+        c.textContent = '🪙';
+        c.style.left = (10 + Math.random() * 80) + '%';
+        c.style.animationDelay = (Math.random() * 0.6) + 's';
+        coins.appendChild(c);
+      }
+    }
+  }
+
+  function showPartyInvite(code) {
+    const box = document.getElementById('party-invite');
+    if (!box || !code) return;
+    box.classList.remove('hidden');
+    const link = location.origin + location.pathname + '#party=' + code;
+    document.getElementById('party-link').value = link;
+    document.getElementById('party-status').textContent = '';
+  }
+
+  function updatePartyHint(code) {
+    const hint = document.getElementById('party-join-hint');
+    if (!hint) return;
+    if (code) {
+      hint.classList.remove('hidden');
+      document.getElementById('party-join-code').textContent = code;
+    } else {
+      hint.classList.add('hidden');
+    }
+  }
+
+  function updatePartyBanner(code) {
+    const b = document.getElementById('party-banner');
+    if (!b) return;
+    if (code) {
+      b.classList.remove('hidden');
+      document.getElementById('party-code-hud').textContent = code;
+    } else {
+      b.classList.add('hidden');
+    }
   }
 
   return {
     t, show, hide, bindCloses, bindSettings, loadSettings, updateHud,
     updateProfile, renderStore, renderLeaders, refreshPreview, saveMyConfig, showDeath,
+    showPartyInvite, updatePartyHint, updatePartyBanner,
     setStoreTab: (tab) => { storeTab = tab; renderStore(); },
   };
 })();

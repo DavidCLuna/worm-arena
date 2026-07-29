@@ -108,12 +108,17 @@ class Worm {
     return drop;
   }
 
-  // Puntos muestreados para la red (cada k-ésimo punto, tope 60)
-  samplePoints() {
+  // Sync completo ocasional: muestreo denso (tope maxPts) para apariciones / resync.
+  // Entre syncs el cliente reconstruye el cuerpo solo con la cabeza (fidelidad perfecta).
+  samplePoints(maxPts = 220) {
     const pts = [];
-    const step = Math.max(1, Math.floor(this.path.length / 55));
+    const step = Math.max(1, Math.floor(this.path.length / Math.max(8, maxPts)));
     for (let i = 0; i < this.path.length; i += step) {
       pts.push([Math.round(this.path[i].x), Math.round(this.path[i].y)]);
+    }
+    const last = this.path[this.path.length - 1];
+    if (last && (pts.length === 0 || pts[pts.length - 1][0] !== Math.round(last.x) || pts[pts.length - 1][1] !== Math.round(last.y))) {
+      pts.push([Math.round(last.x), Math.round(last.y)]);
     }
     return pts;
   }

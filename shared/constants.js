@@ -94,6 +94,8 @@
     BOT_FILL: 24,              // entidades mínimas de relleno por sala
     ENTITY_CAP: 40,            // entidades máximas por sala (humanos + bots)
     HUMAN_CAP: 20,             // humanos máximos por sala → luego se crea otra
+    PARTY_CAP: 8,              // miembros máximos por party link
+    TRAJ_FULL_MS: 2500,        // resync completo de trayectoria (cliente/servidor)
     FOOD_TYPES,
     POTION_TYPES,
     SKINS,

@@ -1,6 +1,6 @@
 // Motor de render: estado del juego, predicción propia, interpolación, dibujo
 const G = {
-  playing: false, dead: false, mode: 'arena', team: 0, myId: 0,
+  playing: false, dead: false, mode: 'arena', team: 0, myId: 0, party: null,
   foods: new Map(), potions: new Map(), worms: new Map(),
   self: { ready: false, x: 0, y: 0, angle: 0, path: [], mass: 20, r: 12, kills: 0,
           fx: { spd: 0, agi: 0, mag: 0, zm: 0, mult: 0, mt: 0 }, fxAt: 0, corrX: 0, corrY: 0 },
@@ -173,6 +173,22 @@ const Render = (() => {
   }
 
   // ===== Snapshots =====
+  // Streaming de trayectoria: si viene `p` (sync completo) se carga el path;
+  // si no, se añade la cabeza y se recorta a lengthOf(mass) — misma lógica que el server.
+  function trimPath(path, mass) {
+    const maxLen = CONST.lengthOf(mass);
+    let acc = 0, cut = path.length;
+    for (let i = 1; i < path.length; i++) {
+      acc += Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+      if (acc > maxLen) { cut = i + 1; break; }
+    }
+    if (cut < path.length) path.length = cut;
+  }
+  function pathToPts(path) {
+    const pts = new Array(path.length);
+    for (let i = 0; i < path.length; i++) pts[i] = [path[i].x, path[i].y];
+    return pts;
+  }
   function onSnap(m) {
     const now = performance.now();
     // reloj del SERVIDOR: interpolar contra él elimina los microtirones por jitter de red
@@ -182,9 +198,24 @@ const Render = (() => {
     for (const w of m.w) {
       seen.add(w.i);
       let e = G.worms.get(w.i);
-      if (!e) { e = { prev: null, cur: null, born: now }; G.worms.set(w.i, e); }
+      if (!e) { e = { prev: null, cur: null, born: now, path: [] }; G.worms.set(w.i, e); }
+      // reconstruir trayectoria local
+      if (w.p && w.p.length) {
+        e.path = w.p.map((pt) => ({ x: pt[0], y: pt[1] }));
+      } else if (typeof w.x === 'number') {
+        const hx = w.x, hy = w.y;
+        const h0 = e.path[0];
+        if (!h0 || h0.x !== hx || h0.y !== hy) e.path.unshift({ x: hx, y: hy });
+        if (!e.path.length) {
+          // fallback: línea corta detrás de la cabeza
+          e.path = [{ x: hx, y: hy }];
+          for (let i = 1; i <= 12; i++) e.path.push({ x: hx - i * 8, y: hy });
+        }
+        trimPath(e.path, w.m);
+      }
+      const pts = pathToPts(e.path);
       e.prev = e.cur;
-      e.cur = { ...w, ts: now, tsS: m.now, crv: curveOf(w.p) };
+      e.cur = { ...w, p: pts, ts: now, tsS: m.now, crv: curveOf(pts) };
       if (!e.prev) e.prev = e.cur;
     }
     for (const id of [...G.worms.keys()]) {
@@ -201,7 +232,7 @@ const Render = (() => {
           if (ev[2] === G.myId && ev[1] !== G.myId) AudioFX.kill();
           // confeti con los colores de la skin del que murió (si estaba visible)
           const e = G.worms.get(ev[1]);
-          if (e && e.cur.p.length) {
+          if (e && e.cur.p && e.cur.p.length) {
             const d = Skins.def(e.cur.s, e.cur.c);
             Particles.confetti(e.cur.p[0][0], e.cur.p[0][1], [d.c1, d.c2, d.c3], 45);
           }
@@ -249,6 +280,7 @@ const Render = (() => {
 
   function onJoin(m) {
     G.playing = true; G.dead = false; G.mode = m.mode; G.team = m.team; G.myId = m.id;
+    G.party = m.party || null;
     G.foods.clear(); G.potions.clear(); G.worms.clear();
     for (const f of m.foods) G.foods.set(f[0], { id: f[0], x: f[1], y: f[2], v: f[3], t: f[4], s: f[5] || 0 });
     const S = G.self;
@@ -339,6 +371,7 @@ const Render = (() => {
   const BODY_SAMPLES = 80;
   function interpBody(e, renderTimeS) {
     const a = e.prev, b = e.cur;
+    if (!a || !b || !a.crv || !b.crv || !b.crv.pts.length) return { pts: [], r: (b && b.r) || 12 };
     let alpha = b.tsS > a.tsS ? (renderTimeS - a.tsS) / (b.tsS - a.tsS) : 1;
     alpha = Math.max(0, Math.min(1, alpha));
     const ca = a.crv, cb = b.crv;
@@ -451,18 +484,21 @@ const Render = (() => {
 
     const renderTimeS = now + (G.off || 0) - 150; // tiempo de render contra el reloj del servidor
 
-    // otros gusanos
+    // otros gusanos + flechas a amigos fuera de pantalla
+    const friendOff = [];
     for (const e of G.worms.values()) {
       if (e.cur.i === G.myId) continue;
       const { pts, r } = interpBody(e, renderTimeS);
-      // visible si CUALQUIER punto del cuerpo está en pantalla (no solo la cabeza:
-      // un gigante puede tener la cabeza lejos y el cuerpo cruzándote)
+      if (!pts.length) continue;
       let vis = false;
       for (let i = 0; i < pts.length; i++) {
         if (inView(pts[i].x, pts[i].y, 300)) { vis = true; break; }
       }
-      if (!vis) continue;
-      drawWorm(pts, r, e.cur.s, e.cur.c, e.cur.w, e.cur.n, e.cur.t, e.cur.b, e.born);
+      if (vis) {
+        drawWorm(pts, r, e.cur.s, e.cur.c, e.cur.w, e.cur.n, e.cur.t, e.cur.b, e.born, !!e.cur.f);
+      } else if (e.cur.f) {
+        friendOff.push(pts[0]);
+      }
     }
     // mi gusano (predicho) — no dibujar si estoy muerto (cámara de muerte)
     if (S.ready && G.playing && !G.dead) {
@@ -505,9 +541,44 @@ const Render = (() => {
       ctx.lineCap = 'butt';
     }
 
-    // viñeta + minimapa (espacio de pantalla)
+    // viñeta + flechas a amigos + minimapa (espacio de pantalla)
     if (vignette) ctx.drawImage(vignette, 0, 0);
+    if (friendOff.length) drawFriendArrows(friendOff);
     if (G.playing) drawMinimap();
+  }
+
+  // Flechas en el borde apuntando a amigos fuera de pantalla
+  function drawFriendArrows(heads) {
+    const margin = 36;
+    const cx = W / 2, cy = H / 2;
+    for (const h of heads) {
+      const sx = (h.x - G.cam.x) * G.cam.zoom + cx;
+      const sy = (h.y - G.cam.y) * G.cam.zoom + cy;
+      const dx = sx - cx, dy = sy - cy;
+      const ang = Math.atan2(dy, dx);
+      // intersección con el rectángulo de pantalla
+      const tan = Math.tan(ang);
+      let ax, ay;
+      if (Math.abs(dx) * (H / 2 - margin) > Math.abs(dy) * (W / 2 - margin)) {
+        ax = dx > 0 ? W - margin : margin;
+        ay = cy + tan * (ax - cx);
+      } else {
+        ay = dy > 0 ? H - margin : margin;
+        ax = cx + (ay - cy) / (tan || 1e-6);
+      }
+      ax = Math.max(margin, Math.min(W - margin, ax));
+      ay = Math.max(margin, Math.min(H - margin, ay));
+      ctx.save();
+      ctx.translate(ax, ay);
+      ctx.rotate(ang);
+      ctx.fillStyle = '#3dd68c';
+      ctx.strokeStyle = 'rgba(0,0,0,.55)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(14, 0); ctx.lineTo(-10, 10); ctx.lineTo(-6, 0); ctx.lineTo(-10, -10);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
   }
 
   // blob naranja para el mapa de calor (pre-renderizado)
@@ -552,7 +623,7 @@ const Render = (() => {
     ctx.beginPath(); ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R); ctx.stroke();
     ctx.fillStyle = 'rgba(255,255,255,.2)';
     ctx.beginPath(); ctx.arc(cx, cy, 2.5, 0, 7); ctx.fill();
-    // yo: punto verde brillante con dirección
+    // yo + amigos de party: puntos verdes
     const S = G.self;
     if (S.ready) {
       const x = cx + (S.x / CONST.WORLD_RADIUS) * R;
@@ -565,6 +636,17 @@ const Render = (() => {
       ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 1.5;
       ctx.stroke();
     }
+    for (const e of G.worms.values()) {
+      if (!e.cur.f || e.cur.i === G.myId) continue;
+      const hx = e.path && e.path[0] ? e.path[0].x : e.cur.x;
+      const hy = e.path && e.path[0] ? e.path[0].y : e.cur.y;
+      if (hx == null) continue;
+      const fx = cx + (hx / CONST.WORLD_RADIUS) * R;
+      const fy = cy + (hy / CONST.WORLD_RADIUS) * R;
+      ctx.fillStyle = '#3dd68c';
+      ctx.beginPath(); ctx.arc(fx, fy, 3.5, 0, 7); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 1.2; ctx.stroke();
+    }
     ctx.restore();
     ctx.strokeStyle = '#e0393e';
     ctx.lineWidth = 3;
@@ -574,7 +656,8 @@ const Render = (() => {
     ctx.beginPath(); ctx.arc(cx, cy, R + 3, 0, Math.PI * 2); ctx.stroke();
   }
 
-  function drawWorm(pts, r, skin, custom, wear, name, team, boosting, born) {
+  function drawWorm(pts, r, skin, custom, wear, name, team, boosting, born, friend) {
+    if (!pts || pts.length < 2) return;
     const d = Skins.def(skin, custom);
     const h = pts[0];
     const ang = Math.atan2(h.y - pts[1].y, h.x - pts[1].x);
@@ -616,7 +699,15 @@ const Render = (() => {
       }
       ctx.lineCap = 'butt';
     }
-    if (team) {
+    // anillo de equipo o de amigo (party)
+    if (friend) {
+      ctx.strokeStyle = 'rgba(61,214,140,.95)';
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(h.x, h.y, r * 1.35, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,.55)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(h.x, h.y, r * 1.35, 0, Math.PI * 2); ctx.stroke();
+    } else if (team) {
       ctx.strokeStyle = team === 1 ? 'rgba(255,93,93,.8)' : 'rgba(58,160,255,.8)';
       ctx.lineWidth = 3;
       ctx.beginPath(); ctx.arc(h.x, h.y, r * 1.25, 0, Math.PI * 2); ctx.stroke();
@@ -624,12 +715,12 @@ const Render = (() => {
     Skins.drawEyes(ctx, h.x, h.y, r * 0.95, ang);
     Skins.drawWear(ctx, h.x, h.y, r * 0.95, ang, wear);
     if (G.showNames && name) {
-      ctx.font = `700 ${Math.max(13, r * 0.85)}px 'Rajdhani', 'Segoe UI', sans-serif`;
+      ctx.font = `800 ${Math.max(13, r * 0.85)}px 'Baloo 2', 'Segoe UI', sans-serif`;
       ctx.textAlign = 'center';
       ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.7)';
       const ny = h.y - r * 1.9;
       ctx.strokeText(name, h.x, ny);
-      ctx.fillStyle = team === 1 ? '#ff8a8a' : team === 2 ? '#8ac4ff' : '#fff';
+      ctx.fillStyle = friend ? '#3dd68c' : team === 1 ? '#ff8a8a' : team === 2 ? '#8ac4ff' : '#fff';
       ctx.fillText(name, h.x, ny);
     }
     ctx.restore(); // fade-in

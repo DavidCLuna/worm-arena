@@ -126,17 +126,44 @@ class World {
   entityCount() { return this.worms.size; }
   humanCount() { let n = 0; for (const w of this.worms.values()) if (!w.isBot) n++; return n; }
 
-  // Convierte el cuerpo de un gusano muerto en comida
+  // Convierte el cuerpo de un gusano muerto en comida (SIEMPRE; si el mapa
+  // está lleno, quita caramelos normales para hacer sitio al festín).
   dropBody(w) {
-    // tope de seguridad: no inflar el mundo con festines infinitos
-    if (this.foods.size > C.FOOD_TARGET * 1.5) return;
+    const softCap = Math.floor(C.FOOD_TARGET * 1.35); // ~3240
+    // estimar cuántas piezas vamos a soltar
     const step = Math.max(2, Math.floor(w.path.length / 70));
+    let pieces = 0;
+    for (let i = 0; i < w.path.length; i += step) pieces++;
+    pieces = Math.max(8, pieces); // mínimo visible aunque el path sea corto
+
+    // hacer sitio: borrar comida normal (no de cadáver) hasta caber el festín
+    const need = this.foods.size + pieces - softCap;
+    if (need > 0) {
+      const victims = [];
+      for (const f of this.foods.values()) {
+        if (!f.s) victims.push(f.id);
+        if (victims.length >= need + 40) break; // margen
+      }
+      for (const id of victims) this.removeFood(id);
+    }
+
+    // soltar a lo largo del cuerpo
+    let dropped = 0;
     for (let i = 0; i < w.path.length; i += step) {
       const p = w.path[i];
-      // tope 10 por pieza: así el radio de recogida coincide con el tamaño dibujado
       const v = Math.max(2, Math.min(10, Math.round(w.mass / 45)));
       const type = Math.random() < 0.5 ? 2 : 4; // donuts y pasteles
       this.spawnFood(p.x + (Math.random() - 0.5) * 24, p.y + (Math.random() - 0.5) * 24, v, type, 1);
+      dropped++;
+    }
+    // si el path era muy corto (gusano recién spawneado), asegurar un festín mínimo
+    if (dropped < 8) {
+      const h = w.head;
+      for (let i = dropped; i < 8; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const rr = 10 + Math.random() * (20 + w.r);
+        this.spawnFood(h.x + Math.cos(a) * rr, h.y + Math.sin(a) * rr, Math.max(2, Math.min(8, Math.round(w.mass / 50))), 2, 1);
+      }
     }
   }
 
@@ -324,7 +351,9 @@ class World {
     return this._hm;
   }
 
-  // Snapshot filtrado por cercanía al espectador (interest management)
+  // Snapshot filtrado por cercanía al espectador (interest management).
+  // Streaming de trayectoria: solo cabeza+meta cada tick; path completo al
+  // aparecer y cada ~2.5s (el cliente reconstruye el cuerpo con fidelidad).
   snapshotFor(viewer, now) {
     const h = viewer.head, R = this.viewRangeOf(viewer, now);
     this.heatmap(now); // recalcular mapa de calor si toca (cada 2s)
@@ -337,17 +366,39 @@ class World {
     for (const p of probe) {
       if (Math.hypot(p.x - h.x, p.y - h.y) <= R * 1.35) nearIds.add(p.worm.id);
     }
+    // estado de sync por cliente (viewer.client puede ser el socket o el ghost.client)
+    const cli = viewer.client;
+    if (cli && !cli.traj) cli.traj = new Map(); // wormId → lastFullAt
+    const traj = cli && cli.traj;
+    const seenNow = new Set();
+    const FULL_EVERY = 2500;
     const worms = [];
     for (const w of this.worms.values()) {
-      const pts = w.samplePoints();
-      const near = w === viewer || nearIds.has(w.id) ||
+      const myParty = cli && cli.partyCode;
+      const isFriend = !!(myParty && w !== viewer && w.client && w.client.partyCode === myParty);
+      const near = w === viewer || nearIds.has(w.id) || isFriend ||
                    Math.hypot(w.head.x - h.x, w.head.y - h.y) <= R * 1.7;
       if (!near) continue;
-      worms.push({
+      seenNow.add(w.id);
+      const lastFull = traj ? (traj.get(w.id) || 0) : 0;
+      const needFull = !traj || !traj.has(w.id) || (now - lastFull >= FULL_EVERY);
+      const entry = {
         i: w.id, n: w.name, m: Math.round(w.mass), r: Math.round(w.r * 10) / 10,
         s: w.skin, c: w.customSkin, w: w.wear, t: w.team, b: w.boosting ? 1 : 0,
-        p: pts,
-      });
+        x: Math.round(w.head.x), y: Math.round(w.head.y),
+        f: isFriend ? 1 : 0,
+      };
+      if (needFull) {
+        entry.p = w.samplePoints(220);
+        if (traj) traj.set(w.id, now);
+      }
+      worms.push(entry);
+    }
+    // si un gusano salió del interest → olvidar sync (al reaparecer manda path completo)
+    if (traj) {
+      for (const id of [...traj.keys()]) {
+        if (!seenNow.has(id)) traj.delete(id);
+      }
     }
     const potions = [];
     for (const po of this.potions.values()) {

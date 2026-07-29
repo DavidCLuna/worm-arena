@@ -34,9 +34,17 @@ const Net = (() => {
     }
   }
 
+  function join(mode, name, skin, customSkin, wear, opts) {
+    opts = opts || {};
+    const msg = { t: 'join', mode, name, skin, customSkin, wear, w: innerWidth, h: innerHeight };
+    if (opts.createParty) msg.createParty = true;
+    if (opts.party) msg.party = opts.party;
+    send(msg);
+  }
+
   return {
     connect, send, sendInput, on: (k, f) => { handlers[k] = f; },
-    join: (mode, name, skin, customSkin, wear) => send({ t: 'join', mode, name, skin, customSkin, wear, w: innerWidth, h: innerHeight }),
+    join,
     register: (user, pass) => send({ t: 'register', user, pass }),
     login: (user, pass) => send({ t: 'login', user, pass }),
     token: (token) => send({ t: 'token', token }),
